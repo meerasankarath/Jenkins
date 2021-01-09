@@ -1,0 +1,97 @@
+    
+node('master')
+{
+        stage('Code Checkout'){
+                git 'https://github.com/meerasankarath/edureka_training.git'
+        }
+        stage('Compile'){
+                sh 'mvn compile'
+        }
+        // stage('CodeReview'){
+        //     agent any
+        //     steps{
+        //         sh 'mvn pmd:pmd'
+        //     }
+        // }
+        stage('UnitTest'){
+                sh 'mvn test'
+        }
+        stage('MetricCheck'){
+            
+                sh 'mvn cobertura:cobertura -Dcobertura.report.format=xml'
+            
+        }
+        
+        stage('Package')
+        {
+                sh 'mvn package'
+                dir('/var/lib/jenkins/workspace/edureka/target')
+                {
+                    stash includes: 'addressbook.war', name: 'addressbook'
+                }
+                node('linuxAgent')
+                {
+                    dir('/home/user1/jenkins_home')
+                    {
+                        unstash 'addressbook'
+                    }
+                }
+        }
+        stage('Deploy')
+        {
+            echo "deploy"
+            //ansiblePlaybook become: true, credentialsId: 'a69f1335-9e66-4684-88c2-f046729d5b5b', disableHostKeyChecking: true, playbook: 'deploy.yml'
+        }
+        boolean testPassed = true
+        stage('Selenium test')
+        {   try{
+                node('linuxAgent')
+                {
+                git 'https://github.com/meerasankarath/selenium.git'
+                sh '''Xvfb :99 -ac -screen 0 1280x1024x24 &
+                nice -n 10 x11vnc 2>&1 &  '''
+                sh 'mvn test'
+                
+                }
+            }
+            catch (Exception e)
+            {
+                testPassed = false
+            }
+        }
+        script{
+            if(testPassed){
+            stage('Production deployment')
+            {
+                node('linuxAgent')
+                    {   container_id = sh (
+                                         script: 'docker ps -aqf "name=meeraansiblecontainer"',
+                                        returnStdout: true
+                                        ).trim()
+                        sh 'echo $container_id'
+                        dh "echo *********"
+                        sh 'echo $(docker ps -aqf "name=agitated_matsumoto")'
+                        sh 'docker commit $container_id meerasankarath/edurekaproject:ansible'
+                        sh 'docker push meerasankarath/edurekaproject:ansible'
+                        withCredentials([usernamePassword(credentialsId: '5c81a838-dff8-4649-999f-92719f4bccdf', passwordVariable: 'pwd', usernameVariable: 'user')]) {
+                        sh 'docker login --username $user --password $pwd'
+                        sh 'docker push meerasankarath/edurekaproject:ansible'
+                        }
+                    }
+                }
+            }
+            else
+            {
+              stage('Delete Container')
+              {
+                  node('linuxAgent')
+                  {
+                    sh 'docker stop meeraansiblecontainer'  
+                    sh 'docker rm meeraansiblecontainer'
+                        //sh 'sudo docker rmi deploy:ansible2'
+                  }
+              }
+            }
+        }
+    
+}
